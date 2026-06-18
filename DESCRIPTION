@@ -1,0 +1,12 @@
+Package: CKMAIcalc
+Title: Compute the CKMAI Score
+Version: 1.0.0
+Authors@R: person("Zhengyang", "Zhu", email = "1149221197@qq.com", role = c("aut", "cre"))
+Description: Provides a function to compute the Composite Kidney-Metabolic-Aging Index (CKMAI) based on 18 variables, with automatic dummy variable handling.
+License: GPL-3
+Depends: R (>= 3.5.0)
+Encoding: UTF-8
+LazyData: false
+Imports: 
+    rms
+Config/roxygen2/version: 8.0.0

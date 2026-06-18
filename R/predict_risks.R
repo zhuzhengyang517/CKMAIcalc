@@ -1,0 +1,88 @@
+#' Predict 10-year mortality and CKM high risk (as percentages)
+#'
+#' This function adds three columns to the input data frame:
+#' \itemize{
+#'   \item \code{risk_all_pct}: 10-year all-cause mortality probability (\%)
+#'   \item \code{risk_cvd_pct}: 10-year cardiovascular mortality probability (\%)
+#'   \item \code{risk_ckm_high_pct}: probability of CKM stage >= 3 (\%)
+#' }
+#' It requires the same variables as CKMAI calculation, plus \code{Age},
+#' \code{Sex}, \code{Smoking}, \code{Diabetes}, \code{Hypertension},
+#' \code{EGFR}, \code{UACR} (for CKM model).
+#'
+#' @param data A data frame with all necessary variables.
+#' @param times Numeric vector of follow-up times (in months) for prediction.
+#'   Default is 120 (10 years).
+#' @param as_percent Logical; if TRUE (default), return percentages; if FALSE, return probabilities (0-1).
+#' @return The input data frame with added columns (risk percentages or probabilities).
+#' @importFrom rms survest
+#' @importFrom stats formula predict
+#' @export
+predict_risks <- function(data, times = 120, as_percent = TRUE) {
+  # 加载模型文件（从包内部读取）
+  model_all <- readRDS(system.file("extdata", "CKMAI_nomogram_model.rds", package = "CKMAIcalc"))
+  model_cvd <- readRDS(system.file("extdata", "CKMAI_nomogram_model_cvd.rds", package = "CKMAIcalc"))
+  ckm_model <- readRDS(system.file("extdata", "CKM_high_logistic.rds", package = "CKMAIcalc"))
+
+  # 确保数据中有 CKMAI 列（如果没有则计算）
+  if (!"CKMAI" %in% colnames(data)) {
+    data$CKMAI <- compute_CKMAI(data)
+  }
+
+  # --- 准备Cox模型所需变量（排除时间和事件列） ---
+  cox_vars <- all.vars(formula(model_all))
+  time_event_vars <- c("Follow_up", "Mortality_Status")
+  cox_vars <- setdiff(cox_vars, time_event_vars)
+
+  missing <- setdiff(cox_vars, colnames(data))
+  if (length(missing) > 0) {
+    stop(paste("Missing variables needed for Cox model:", paste(missing, collapse=", ")))
+  }
+
+  newdata <- data[, cox_vars, drop = FALSE]
+
+  # 预测全因死亡风险
+  surv_all <- rms::survest(model_all, newdata = newdata, times = times)
+  risk_all <- 1 - surv_all$surv
+
+  # 预测 CVD 死亡风险
+  surv_cvd <- rms::survest(model_cvd, newdata = newdata, times = times)
+  risk_cvd <- 1 - surv_cvd$surv
+
+  # --- 预测 CKM 高风险（Logistic模型） ---
+  ckm_vars <- c("CKMAI", "Age", "Sex", "Smoking", "Diabetes", "Hypertension", "EGFR", "UACR")
+  missing_ckm <- setdiff(ckm_vars, colnames(data))
+  if (length(missing_ckm) > 0) {
+    stop(paste("Missing variables for CKM model:", paste(missing_ckm, collapse=", ")))
+  }
+
+  ckm_data <- data.frame(
+    CKMAI = data$CKMAI,
+    Age = data$Age,
+    Sex = as.numeric(data$Sex),
+    Smoking = as.numeric(data$Smoking),
+    Diabetes = as.numeric(data$Diabetes),
+    Hypertension = as.numeric(data$Hypertension),
+    EGFR = data$EGFR,
+    UACR = data$UACR
+  )
+
+  risk_ckm <- predict(ckm_model, newdata = ckm_data, type = "response")
+
+  # 根据参数决定输出百分比还是概率
+  if (as_percent) {
+    data$risk_all_pct <- risk_all * 100
+    data$risk_cvd_pct <- risk_cvd * 100
+    data$risk_ckm_high_pct <- risk_ckm * 100
+    # 同时保留原始概率（可选）
+    data$risk_all_prob <- risk_all
+    data$risk_cvd_prob <- risk_cvd
+    data$risk_ckm_high_prob <- risk_ckm
+  } else {
+    data$risk_all <- risk_all
+    data$risk_cvd <- risk_cvd
+    data$risk_ckm_high <- risk_ckm
+  }
+
+  return(data)
+}
