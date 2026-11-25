@@ -1,3 +1,4 @@
+# Version naming and build definitions: see NEWS.md (1.0.1 coefficient-correct / 1.0.0 manuscript-reproduction).
 #' Predict 10-year mortality and CKM high risk (as percentages)
 #'
 #' This function adds three columns to the input data frame:
@@ -41,12 +42,21 @@ predict_risks <- function(data, times = 120, as_percent = TRUE) {
 
   newdata <- data[, cox_vars, drop = FALSE]
 
-  # 预测全因死亡风险
+  # --- Sex 编码显式映射（补丁 1.0.1）---
+  # 外部统一约定：Sex 1=male / 2=female。
+  # 全因模型按 1/2 训练（newdata 保持原样）；CVD 模型按 1/0 训练，需映射。
+  sex01 <- as.numeric(data$Sex == 1)          # male=1, female=0
+  newdata_cvd <- newdata
+  if ("Sex" %in% colnames(newdata_cvd)) {
+    newdata_cvd$Sex <- sex01
+  }
+
+  # 预测全因死亡风险（Sex 1/2，原样）
   surv_all <- rms::survest(model_all, newdata = newdata, times = times)
   risk_all <- 1 - surv_all$surv
 
-  # 预测 CVD 死亡风险
-  surv_cvd <- rms::survest(model_cvd, newdata = newdata, times = times)
+  # 预测 CVD 死亡风险（Sex 映射为 1/0）
+  surv_cvd <- rms::survest(model_cvd, newdata = newdata_cvd, times = times)
   risk_cvd <- 1 - surv_cvd$surv
 
   # --- 预测 CKM 高风险（Logistic模型） ---
@@ -56,10 +66,16 @@ predict_risks <- function(data, times = 120, as_percent = TRUE) {
     stop(paste("Missing variables for CKM model:", paste(missing_ckm, collapse=", ")))
   }
 
+  # CKM logistic 为冻结模型，训练时 CKMAI 为 abs 0–100 分数。
+  # 为保持其输入尺度（不重拟合），内部用 legacy abs 参数件重算，仅作该模型输入；
+  # 对外发布的 CKMAI 仍是 signed（data$CKMAI），legacy abs 不作临床输出。
+  legacy_file <- system.file("extdata", "CKMAI_params_legacy_abs.rds", package = "CKMAIcalc")
+  ckmai_legacy <- compute_CKMAI(data, params_file = legacy_file)
+
   ckm_data <- data.frame(
-    CKMAI = data$CKMAI,
+    CKMAI = ckmai_legacy,
     Age = data$Age,
-    Sex = as.numeric(data$Sex),
+    Sex = as.numeric(data$Sex == 1),   # CKM logistic 按 1/0 训练
     Smoking = as.numeric(data$Smoking),
     Diabetes = as.numeric(data$Diabetes),
     Hypertension = as.numeric(data$Hypertension),
